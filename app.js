@@ -8,8 +8,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const chess = new Chess(); 
-
+let chess = new Chess();
 const players = {};
 
 app.set("views", path.join(__dirname, "views"));
@@ -17,54 +16,57 @@ app.set("view engine", "ejs");
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/", (req, res) => {
-    res.render("index");
+  res.render("index");
 });
 
-io.on("connection", (socket) => {
+io.on("connection", socket => {
 
-    console.log("User connected:", socket.id);
+  if (!players.w) {
+    players.w = socket.id;
+    socket.emit("playerRole", "w");
+  } else if (!players.b) {
+    players.b = socket.id;
+    socket.emit("playerRole", "b");
+  } else {
+    socket.emit("spectator");
+  }
 
-    if (!players.w) {
-        players.w = socket.id;
-        socket.emit("playerRole", "w");
-    } 
-    else if (!players.b) {
-        players.b = socket.id;
-        socket.emit("playerRole", "b");
-    } 
-    else {
-        socket.emit("spectator");
-    }
+  socket.emit("boardState", chess.fen());
 
-    socket.emit("boardState", chess.fen());
+  socket.on("move", move => {
+    try {
 
-    socket.on("move", (move) => {
-        try {
+      if (chess.turn() === "w" && socket.id !== players.w) return;
+      if (chess.turn() === "b" && socket.id !== players.b) return;
+      if (move.from === move.to) return;
 
-            
-            if (chess.turn() === "w" && socket.id !== players.w) return;
-            if (chess.turn() === "b" && socket.id !== players.b) return;
+      const result = chess.move(move);
 
-            const result = chess.move(move);
+      if (result) {
+        io.emit("boardState", chess.fen());
 
-            if (result) {
-                io.emit("boardState", chess.fen());
-            } else {
-                socket.emit("invalidMove", move);
-            }
-
-        } catch (err) {
-            console.log("Move error:", err);
-            socket.emit("invalidMove", move);
+        if (chess.isCheckmate()) {
+          io.emit("gameOver", {
+            type: "checkmate",
+            winner: chess.turn() === "w" ? "Black" : "White"
+          });
+        } else if (chess.isDraw()) {
+          io.emit("gameOver", { type: "draw" });
         }
-    });
+      }
 
-    socket.on("disconnect", () => {
-        if (socket.id === players.w) delete players.w;
-        if (socket.id === players.b) delete players.b;
-    });
+    } catch (err) {}
+  });
+
+  socket.on("resetGame", () => {
+    chess = new Chess();
+    io.emit("boardState", chess.fen());
+  });
+
+  socket.on("disconnect", () => {
+    if (socket.id === players.w) delete players.w;
+    if (socket.id === players.b) delete players.b;
+  });
 });
 
-server.listen(3000, "0.0.0.0", () => {
-    console.log("Server running on port 3000");
-});
+server.listen(3000, "0.0.0.0");
